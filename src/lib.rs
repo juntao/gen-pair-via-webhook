@@ -10,11 +10,11 @@ use flowsnet_platform_sdk::logger;
 // use lazy_static::lazy_static;
 // use once_cell::sync::Lazy;
 // use tokio::sync::Mutex;
+use csv::{QuoteStyle, WriterBuilder};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
 use webhook_flows::{create_endpoint, request_handler, send_response};
-
 // static MESSAGES: Lazy<Mutex<Vec<ChatCompletionRequestMessage>>> = Lazy::new(|| {
 //     let mut messages = Vec::new();
 //     messages.push(
@@ -78,16 +78,22 @@ async fn handler(
             return;
         }
         Err(_e) => {
-            log::error!("gen_pair function failed: {_e}");
+            log::error!("gen_pair function failed: {}", _e);
             return;
         }
     };
     let (question, answer) = response.split_once('\n').unwrap_or(("", ""));
 
-    let formatted_answer = format!(
-        r#"Question,Answer
-"{question}","{answer}""#
-    );
+    let mut wtr = WriterBuilder::new()
+        .quote_style(QuoteStyle::Always)
+        .from_writer(vec![]);
+
+    wtr.write_record(&[question, answer])
+        .expect("Failed to write record");
+
+    let formatted_answer =
+        String::from_utf8(wtr.into_inner().expect("Failed to finalize CSV writing"))
+            .expect("Failed to convert to String");
 
     send_response(
         200,
