@@ -2,57 +2,62 @@ use async_openai::{
     types::{
         ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs,
         ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs,
-        CreateMessageRequestArgs, CreateRunRequestArgs, CreateThreadRequestArgs, MessageContent,
-        RunStatus,
     },
     Client,
 };
 use dotenv::dotenv;
 use flowsnet_platform_sdk::logger;
-use lazy_static::lazy_static;
-use once_cell::sync::Lazy;
+// use lazy_static::lazy_static;
+// use once_cell::sync::Lazy;
+// use tokio::sync::Mutex;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
-use tokio::sync::Mutex;
-use webhook_flows::{request_received, send_response};
+use webhook_flows::{create_endpoint, request_handler, send_response};
 
-static MESSAGES: Lazy<Mutex<Vec<ChatCompletionRequestMessage>>> = Lazy::new(|| {
-    let mut messages = Vec::new();
-    messages.push(
-        ChatCompletionRequestSystemMessageArgs::default()
-            .content("Perform function requests for the user")
-            .build()
-            .expect("Failed to build system message")
-            .into(),
-    );
-    Mutex::new(messages)
-});
+// static MESSAGES: Lazy<Mutex<Vec<ChatCompletionRequestMessage>>> = Lazy::new(|| {
+//     let mut messages = Vec::new();
+//     messages.push(
+//         ChatCompletionRequestSystemMessageArgs::default()
+//             .content("Perform function requests for the user")
+//             .build()
+//             .expect("Failed to build system message")
+//             .into(),
+//     );
+//     Mutex::new(messages)
+// });
 
 #[no_mangle]
 #[tokio::main(flavor = "current_thread")]
-pub async fn run() {
-    dotenv::dotenv().ok();
+pub async fn on_deploy() {
+    dotenv().ok();
     logger::init();
-    request_received(handler).await;
+    create_endpoint().await;
 }
 
-async fn handler(_headers: Vec<(String, String)>, _qry: HashMap<String, Value>, _body: Vec<u8>) {
-    let body_str = match String::from_utf8(_body) {
-        Ok(body) => body,
-        Err(e) => {
-            eprintln!("Failed to parse request body as UTF-8 string: {}", e);
-            return;
+#[request_handler]
+async fn handler(
+    _headers: Vec<(String, String)>,
+    _subpath: String,
+    _qry: HashMap<String, Value>,
+    _body: Vec<u8>,
+) {
+    let bot_prompt = env::var("BOT_PROMPT").unwrap_or("You're a language expert. You are to generate a question and answer pair based on the user's input, please put the question and answer on two separate lines dilimited by \n".into());
+
+    let mut messages = vec![ChatCompletionRequestSystemMessageArgs::default()
+        .content(&bot_prompt)
+        .build()
+        .expect("Failed to build system message")
+        .into()];
+
+    let user_input = match String::from_utf8(_body) {
+        Ok(body) => {
+            log::info!("parsed body from request: {}", body.clone());
+            body
         }
-    };
-
-    let raw_input: JsonResult<Value> = serde_json::from_str(&body_str);
-
-    let question = match raw_input {
-        Ok(json) => json["question"].to_string(),
         Err(e) => {
-            eprintln!("Failed to parse request body as JSON: {}", e);
-            "".to_string()
+            log::error!("Failed to parse request body as UTF-8 string: {}", e);
+            return;
         }
     };
 
@@ -61,12 +66,23 @@ async fn handler(_headers: Vec<(String, String)>, _qry: HashMap<String, Value>, 
     //     .unwrap_or(&Value::Null)
     //     .as_str()
     //     .map(|n| n.to_string());    let OPENAI_API_KEY = std::env::var("OPENAI_API_KEY").unwrap();
-    let mut messages = MESSAGES.lock().await.clone();
+    // let mut messages = MESSAGES.lock().await.clone();
 
-    let answer = match gen_pair(question, &mut messages).await {
-        Ok(Some(response)) => response,
-        _ => "Error processing response from OpenAI API".to_string(),
+    let response = match gen_pair(user_input, &mut messages).await {
+        Ok(Some(response)) => {
+            log::info!("Generated: {}", response.clone());
+            response
+        }
+        Ok(None) => {
+            log::error!("GPT failed to generate qa pair");
+            return;
+        }
+        Err(_e) => {
+            log::error!("gen_pair function failed: {_e}");
+            return;
+        }
     };
+    let (question, answer) = response.split_once('\n').unwrap_or(("", ""));
 
     let formatted_answer = format!(
         r#"Question,Answer
@@ -96,7 +112,7 @@ pub async fn gen_pair(
     messages.push(user_msg_obj);
 
     let request = CreateChatCompletionRequestArgs::default()
-        .max_tokens(512u16)
+        .max_tokens(256u16)
         .model("gpt-3.5-turbo-1106")
         .messages(messages.clone())
         .build()?;
