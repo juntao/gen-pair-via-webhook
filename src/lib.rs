@@ -35,7 +35,7 @@ pub async fn on_deploy() {
     create_endpoint().await;
 }
 
-#[request_handler]
+#[request_handler(GET, POST)]
 async fn handler(
     _headers: Vec<(String, String)>,
     _subpath: String,
