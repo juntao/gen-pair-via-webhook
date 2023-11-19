@@ -1,31 +1,19 @@
 use async_openai::{
     types::{
-        ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs,
-        ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs,
+        ChatCompletionFunctionsArgs, ChatCompletionRequestMessage,
+        ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestUserMessageArgs,
+        ChatCompletionTool, ChatCompletionToolArgs, ChatCompletionToolType,
+        CreateChatCompletionRequestArgs, FinishReason,
     },
     Client,
 };
+use csv::{QuoteStyle, WriterBuilder};
 use dotenv::dotenv;
 use flowsnet_platform_sdk::logger;
-// use lazy_static::lazy_static;
-// use once_cell::sync::Lazy;
-// use tokio::sync::Mutex;
-use csv::{QuoteStyle, WriterBuilder};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::env;
 use webhook_flows::{create_endpoint, request_handler, send_response};
-// static MESSAGES: Lazy<Mutex<Vec<ChatCompletionRequestMessage>>> = Lazy::new(|| {
-//     let mut messages = Vec::new();
-//     messages.push(
-//         ChatCompletionRequestSystemMessageArgs::default()
-//             .content("Perform function requests for the user")
-//             .build()
-//             .expect("Failed to build system message")
-//             .into(),
-//     );
-//     Mutex::new(messages)
-// });
 
 #[no_mangle]
 #[tokio::main(flavor = "current_thread")]
@@ -42,7 +30,7 @@ async fn handler(
     _qry: HashMap<String, Value>,
     _body: Vec<u8>,
 ) {
-    let bot_prompt = env::var("BOT_PROMPT").unwrap_or("You're a language expert. You are to generate a question and answer pair based on the user's input, please put the question and answer on two separate lines dilimited by \n".into());
+    let bot_prompt = env::var("BOT_PROMPT").unwrap_or("You're a language expert. You are to generate a question and answer pair based on the user's input.".into());
 
     let mut messages = vec![ChatCompletionRequestSystemMessageArgs::default()
         .content(&bot_prompt)
@@ -61,57 +49,63 @@ async fn handler(
         }
     };
 
-    // let user_login = _qry
-    //     .get("login")
-    //     .unwrap_or(&Value::Null)
-    //     .as_str()
-    //     .map(|n| n.to_string());    let OPENAI_API_KEY = std::env::var("OPENAI_API_KEY").unwrap();
-    // let mut messages = MESSAGES.lock().await.clone();
+    if let Ok(Some((question, answer))) = gen_pair(user_input, &mut messages).await {
+        let mut wtr = WriterBuilder::new()
+            .delimiter(b',')
+            .quote_style(QuoteStyle::Always)
+            .from_writer(vec![]);
 
-    let response = match gen_pair(user_input, &mut messages).await {
-        Ok(Some(response)) => {
-            log::info!("Generated: {}", response.clone());
-            response
-        }
-        Ok(None) => {
-            log::error!("GPT failed to generate qa pair");
-            return;
-        }
-        Err(_e) => {
-            log::error!("gen_pair function failed: {}", _e);
-            return;
-        }
-    };
-    let (question, answer) = response.split_once('\n').unwrap_or(("", ""));
+        wtr.write_record(&["Question", "Answer"])
+            .expect("Failed to header row record");
 
-    let mut wtr = WriterBuilder::new()
-        .delimiter(b',')
-        .quote_style(QuoteStyle::Always)
-        .from_writer(vec![]);
+        wtr.write_record(&[question, answer])
+            .expect("Failed to write record");
 
-    wtr.write_record(&["Question", "Answer"]).expect("Failed to header row record");
+        let formatted_answer =
+            String::from_utf8(wtr.into_inner().expect("Failed to finalize CSV writing"))
+                .expect("Failed to convert to String");
 
-    wtr.write_record(&[question, answer])
-        .expect("Failed to write record");
-
-    let formatted_answer =
-        String::from_utf8(wtr.into_inner().expect("Failed to finalize CSV writing"))
-            .expect("Failed to convert to String");
-
-    send_response(
-        200,
-        vec![(
-            String::from("content-type"),
-            String::from("text/plain; charset=UTF-8"),
-        )],
-        formatted_answer.as_bytes().to_vec(),
-    );
+        send_response(
+            200,
+            vec![(
+                String::from("content-type"),
+                String::from("text/plain; charset=UTF-8"),
+            )],
+            formatted_answer.as_bytes().to_vec(),
+        );
+    }
 }
 
 pub async fn gen_pair(
     user_input: String,
     messages: &mut Vec<ChatCompletionRequestMessage>,
-) -> Result<Option<String>, Box<dyn std::error::Error>> {
+) -> Result<Option<(String, String)>, Box<dyn std::error::Error>> {
+    let tools: Vec<ChatCompletionTool> = vec![ChatCompletionToolArgs::default()
+        .r#type(ChatCompletionToolType::Function)
+        .function(
+            ChatCompletionFunctionsArgs::default()
+                .name("genQa")
+                .description("Generate a question and answer pair")
+                .parameters(json!({
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": "The question generated by the function",
+                        },
+                     "answer": {
+                            "type": "string",
+                            "description": "The answer generated by the function",
+                        },
+                    },
+                    "required": ["question", "answer"],
+                }))
+                .build()
+                .expect("Failed to build getWeather function"),
+        )
+        .build()
+        .expect("Failed to build genQa tool")];
+
     let client = Client::new();
     let user_msg_obj = ChatCompletionRequestUserMessageArgs::default()
         .content(user_input)
@@ -124,15 +118,38 @@ pub async fn gen_pair(
         .max_tokens(256u16)
         .model("gpt-3.5-turbo-1106")
         .messages(messages.clone())
+        .tools(tools)
         .build()?;
 
     let chat = client.chat().create(request).await?;
 
     // let check = chat.choices.get(0).clone().unwrap();
     // send_message_to_channel("ik8", "general", format!("{:?}", check)).await;
+    let wants_to_use_function = chat
+        .choices
+        .get(0)
+        .map(|choice| choice.finish_reason == Some(FinishReason::ToolCalls))
+        .unwrap_or(false);
 
-    match chat.choices[0].message.clone().content {
-        Some(res) => Ok(Some(res)),
-        None => Ok(None),
+    let mut res = (String::new(), String::new());
+    if wants_to_use_function {
+        let tool_calls = chat.choices[0].message.tool_calls.as_ref().unwrap();
+
+        for tool_call in tool_calls {
+            let function = &tool_call.function;
+
+            match function.name.as_str() {
+                "genQa" => {
+                    let argument_obj =
+                        serde_json::from_str::<HashMap<String, String>>(&function.arguments)?;
+                    let q = argument_obj["question"].to_string();
+                    let a = argument_obj["answer"].to_string();
+                    res = (q, a);
+                }
+                _ => {}
+            };
+        }
     }
+
+    Ok(Some(res))
 }
