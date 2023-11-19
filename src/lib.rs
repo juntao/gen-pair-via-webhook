@@ -85,8 +85,11 @@ async fn handler(
     let (question, answer) = response.split_once('\n').unwrap_or(("", ""));
 
     let mut wtr = WriterBuilder::new()
+        .delimiter(b',')
         .quote_style(QuoteStyle::Always)
         .from_writer(vec![]);
+
+    wtr.write_record(&["Question", "Answer"]).expect("Failed to header row record");
 
     wtr.write_record(&[question, answer])
         .expect("Failed to write record");
