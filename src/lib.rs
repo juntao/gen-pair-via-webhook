@@ -138,9 +138,11 @@ pub async fn gen_pair(
 
     let chat = client.chat().create(request).await?;
 
-    let check = chat.choices.get(0).clone().unwrap();
+    let check1 = chat.choices.clone();
+    log::error!("got choices from chat: {:?}", check1);
+    let check2 = check1.get(0).clone().unwrap();
 
-    log::info!("got response from chat: {:?}", check);
+    log::info!("got response from chat: {:?}", check2);
 
     let wants_to_use_function = chat
         .choices
