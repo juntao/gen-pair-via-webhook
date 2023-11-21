@@ -130,7 +130,7 @@ pub async fn gen_pair(
     messages.push(user_msg_obj);
 
     let request = CreateChatCompletionRequestArgs::default()
-        .max_tokens(256u16)
+        .max_tokens(2000u16)
         .model("gpt-3.5-turbo-1106")
         .messages(messages.clone())
         .tools(tools)
@@ -139,7 +139,7 @@ pub async fn gen_pair(
     let chat = client.chat().create(request).await?;
 
     let check = chat.choices.get(0).clone().unwrap();
-    
+
     log::info!("got response from chat: {:?}", check);
 
     let wants_to_use_function = chat
