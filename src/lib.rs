@@ -138,8 +138,10 @@ pub async fn gen_pair(
 
     let chat = client.chat().create(request).await?;
 
-    // let check = chat.choices.get(0).clone().unwrap();
-    // send_message_to_channel("ik8", "general", format!("{:?}", check)).await;
+    let check = chat.choices.get(0).clone().unwrap();
+    
+    log::info!("got response from chat: {:?}", check);
+
     let wants_to_use_function = chat
         .choices
         .get(0)
