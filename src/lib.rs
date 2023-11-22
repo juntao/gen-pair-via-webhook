@@ -121,7 +121,6 @@ pub async fn gen_pair(
 
     let mut qa_pairs_vec = Vec::new();
     if let Some(qa_pairs_json) = &chat.choices[0].message.content {
-        // println!("qa_pairs_json: {:?}\n\n", qa_pairs_json);
         let deserialized: HashMap<String, Vec<QaPair>> = serde_json::from_str(&qa_pairs_json)?;
 
         if let Some(qa_pairs) = deserialized.get("qa_pairs") {
@@ -130,8 +129,6 @@ pub async fn gen_pair(
                 .map(|qa| (qa.question.clone(), qa.answer.clone()))
                 .collect();
         }
-        // println!("qa_pairs: {:?}\n\n", qa_pairs_vec.clone());
     }
-    log::info!("qa_pairs: {:?}", qa_pairs_vec.clone());
     Ok(Some(qa_pairs_vec))
 }

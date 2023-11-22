@@ -4,6 +4,8 @@ Deploy this function on your server, and you will get a service that uses OpenAI
 
 Try it out by deploying your own instance and sending text to see the generated Q&A pairs!
 
+This function uses async_openai_wasi to access JSON mode - one of OpenAI's latest advancement in gpt models. 
+
 ## Prerequisites
 
 * You will need to bring your own [OpenAI API key](https://openai.com/blog/openai-api). If you do not already have one, [sign up here](https://platform.openai.com/signup).
