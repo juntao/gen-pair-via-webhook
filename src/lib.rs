@@ -98,6 +98,9 @@ pub async fn gen_pair(
     // For each segment of text, create multiple question and answer pairs that are not only relevant and accurate but also varied in type (e.g., factual, inferential, thematic). Ensure that the questions are clear, engaging, and capable of prompting deep understanding of the content. Likewise, the answers should be precise, informative, and succinct, reliably reflecting the information and intent of the original text.
     // Strive to produce a rich and comprehensive set of question and answer pairs that can serve as an effective training dataset for another language model. This dataset should help the model to learn the intricacies of text comprehension, ranging from specific details to overarching concepts. Quantity is important, but never at the expense of quality. Avoid redundancy and aim for a balance between breadth and depth in your questions and answers.".into());
     let bot_prompt = env::var("BOT_PROMPT").unwrap_or("As a highly skilled language assistant, your role is to generate informative question and answer pairs from a provided text. You must thoroughly analyze the text both at the micro level—focusing on specific details within small, related segments—and at the macro level, considering the overarching themes and concepts. Produce a diverse set of Q&A pairs that are relevant, varied, and accurate. Your questions should be clear and engaging, promoting a deep understanding of the content, while the answers should be precise and informative. The goal is to create a rich and comprehensive dataset that balances quantity with quality, serving as a valuable resource for training other language models. Please avoid redundancy and strive for a balance in your output.".into());
+    let bot_prompt = env::var("BOT_PROMPT").unwrap_or(
+    "As a highly skilled language assistant, you are tasked with generating a scalable number of informative question and answer pairs from the provided text. The number of pairs generated should correspond to the length of the text: more pairs for longer texts, fewer pairs for shorter texts. Analyze the text at both the micro level—detailing specific segments—and the macro level—capturing overarching themes. Craft Q&A pairs that are relevant, accurate, and varied in type (factual, inferential, thematic). Your questions should be engaging, and answers should be concise, both reflecting the text's intent. Aim for a comprehensive dataset that is rich in content and suitable for training language models, balancing the depth and breadth of information without redundancy."
+.into());
 
     let user_input = format!(
         "Here is the user input to work with: {}. Your task is to dissect this text for both granular details and broader themes, crafting multiple Q&A pairs for each part. The questions should cover different types: factual, inferential, thematic, etc. Answers must be concise and reflective of the text's intent. Please generate as many question and answers as possible. Provide the results in the following JSON format:
@@ -107,7 +110,7 @@ pub async fn gen_pair(
                     \"question\": \"<Your question>\",
                     \"answer\": \"<Your answer>\"
                 }},
-                // ... additional Q&A pairs
+                // ... additional Q&A pairs based on text length
             ]
         }}",
         user_input
