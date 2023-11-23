@@ -31,12 +31,14 @@ pub async fn upload_airtable(question: &str, answer: &str) {
         "Question": question,
         "Answer": answer,
     });
-    create_record(
+    match create_record(
         &airtable_token_name,
         &airtable_base_id,
         &airtable_table_name,
         data.clone(),
-    );
+    ) {
+        () => log::info!("Uploaded to airtable: {}", answer.to_string()),
+    }
 }
 
 #[request_handler(GET, POST)]
