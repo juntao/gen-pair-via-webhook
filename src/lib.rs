@@ -1,3 +1,4 @@
+use airtable_flows::create_record;
 use async_openai::{
     types::{
         ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestUserMessageArgs,
@@ -13,13 +14,29 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
 use webhook_flows::{create_endpoint, request_handler, send_response};
-
 #[no_mangle]
 #[tokio::main(flavor = "current_thread")]
 pub async fn on_deploy() {
     dotenv().ok();
     logger::init();
     create_endpoint().await;
+}
+
+pub async fn upload_airtable(question: &str, answer: &str) {
+    let airtable_token_name = env::var("airtable_token_name").unwrap_or("github".to_string());
+    let airtable_base_id = env::var("airtable_base_id").unwrap_or("appNEswczILgUsxML".to_string());
+    let airtable_table_name = env::var("airtable_table_name").unwrap_or("mention".to_string());
+
+    let data = serde_json::json!({
+        "Question": question,
+        "Answer": answer,
+    });
+    create_record(
+        &airtable_token_name,
+        &airtable_base_id,
+        &airtable_table_name,
+        data.clone(),
+    );
 }
 
 #[request_handler(GET, POST)]
@@ -133,6 +150,9 @@ pub async fn gen_pair(
                 .map(|qa| (qa.question.clone(), qa.answer.clone()))
                 .collect();
         }
+    }
+    for (question, answer) in &qa_pairs_vec {
+        upload_airtable(question, answer).await;
     }
 
     Ok(Some(qa_pairs_vec))
