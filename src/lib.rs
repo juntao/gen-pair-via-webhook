@@ -68,14 +68,18 @@ async fn handler(
         .expect("Failed to header row record");
 
     let chunks = split_text_into_chunks(&user_input, 2000);
+    let mut count = 0;
 
     for user_input in chunks {
         if let Ok(Some(qa_pairs)) = gen_pair(user_input).await {
             for (question, answer) in qa_pairs {
+                count += 1;
+
                 wtr.write_record(&[question, answer])
                     .expect("Failed to write record");
             }
         }
+        log::error!("produced {} QAs", count);
     }
 
     let data = wtr.into_inner().expect("Failed to finalize CSV writing");
@@ -94,10 +98,6 @@ async fn handler(
 pub async fn gen_pair(
     user_input: String,
 ) -> Result<Option<Vec<(String, String)>>, Box<dyn std::error::Error>> {
-    // let bot_prompt = env::var("BOT_PROMPT").unwrap_or("You are a highly skilled language assistant with expertise in generating insightful question and answer pairs from provided texts. Your task is to carefully analyze the user's input text in two ways: first, by focusing on the details and nuances within small segments of the text, i.e. several adjacent lines pertaining to a common subject, and second, by considering the broader themes and ideas that emerge from the text as a whole.
-    // For each segment of text, create multiple question and answer pairs that are not only relevant and accurate but also varied in type (e.g., factual, inferential, thematic). Ensure that the questions are clear, engaging, and capable of prompting deep understanding of the content. Likewise, the answers should be precise, informative, and succinct, reliably reflecting the information and intent of the original text.
-    // Strive to produce a rich and comprehensive set of question and answer pairs that can serve as an effective training dataset for another language model. This dataset should help the model to learn the intricacies of text comprehension, ranging from specific details to overarching concepts. Quantity is important, but never at the expense of quality. Avoid redundancy and aim for a balance between breadth and depth in your questions and answers.".into());
-    let bot_prompt = env::var("BOT_PROMPT").unwrap_or("As a highly skilled language assistant, your role is to generate informative question and answer pairs from a provided text. You must thoroughly analyze the text both at the micro level—focusing on specific details within small, related segments—and at the macro level, considering the overarching themes and concepts. Produce a diverse set of Q&A pairs that are relevant, varied, and accurate. Your questions should be clear and engaging, promoting a deep understanding of the content, while the answers should be precise and informative. The goal is to create a rich and comprehensive dataset that balances quantity with quality, serving as a valuable resource for training other language models. Please avoid redundancy and strive for a balance in your output.".into());
     let bot_prompt = env::var("BOT_PROMPT").unwrap_or(
     "As a highly skilled language assistant, you are tasked with generating a scalable number of informative question and answer pairs from the provided text. The number of pairs generated should correspond to the length of the text: more pairs for longer texts, fewer pairs for shorter texts. Analyze the text at both the micro level—detailing specific segments—and the macro level—capturing overarching themes. Craft Q&A pairs that are relevant, accurate, and varied in type (factual, inferential, thematic). Your questions should be engaging, and answers should be concise, both reflecting the text's intent. Aim for a comprehensive dataset that is rich in content and suitable for training language models, balancing the depth and breadth of information without redundancy."
 .into());
