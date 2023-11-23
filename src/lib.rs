@@ -1,8 +1,8 @@
 use async_openai::{
     types::{
-        ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs,
-        ChatCompletionRequestUserMessageArgs, ChatCompletionResponseFormat,
-        ChatCompletionResponseFormatType, CreateChatCompletionRequestArgs,
+        ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestUserMessageArgs,
+        ChatCompletionResponseFormat, ChatCompletionResponseFormatType,
+        CreateChatCompletionRequestArgs,
     },
     Client,
 };
@@ -29,14 +29,6 @@ async fn handler(
     _qry: HashMap<String, Value>,
     _body: Vec<u8>,
 ) {
-    let bot_prompt = env::var("BOT_PROMPT").unwrap_or("You're a language expert. You are to generate question and answer pairs based on user's input. Generate as many question and answer pairs as possible. The answers should be as concise as possible.".into());
-
-    let mut messages = vec![ChatCompletionRequestSystemMessageArgs::default()
-        .content(&bot_prompt)
-        .build()
-        .expect("Failed to build system message")
-        .into()];
-
     let user_input = match String::from_utf8(_body) {
         Ok(body) => {
             log::info!("parsed body from request: {}", body.clone());
@@ -47,6 +39,43 @@ async fn handler(
             return;
         }
     };
+
+    let mut wtr = WriterBuilder::new()
+        .delimiter(b',')
+        .quote_style(QuoteStyle::Always)
+        .from_writer(vec![]);
+
+    wtr.write_record(&["Question", "Answer"])
+        .expect("Failed to header row record");
+
+    let chunks = split_text_into_chunks(&user_input, 1500);
+
+    for user_input in chunks {
+        if let Ok(Some(qa_pairs)) = gen_pair(user_input).await {
+            for (question, answer) in qa_pairs {
+                wtr.write_record(&[question, answer])
+                    .expect("Failed to write record");
+            }
+        }
+    }
+
+    let data = wtr.into_inner().expect("Failed to finalize CSV writing");
+    let formatted_answer = String::from_utf8(data).expect("Failed to convert to String");
+
+    send_response(
+        200,
+        vec![(
+            String::from("content-type"),
+            String::from("text/plain; charset=UTF-8"),
+        )],
+        formatted_answer.as_bytes().to_vec(),
+    );
+}
+
+pub async fn gen_pair(
+    user_input: String,
+) -> Result<Option<Vec<(String, String)>>, Box<dyn std::error::Error>> {
+    let bot_prompt = env::var("BOT_PROMPT").unwrap_or("You're a language expert. You are to generate question and answer pairs based on the user's input. Generate as many question and answer pairs as possible. The answers should be as concise as possible.".into());
 
     let user_input = format!(
         "Here is the user input to work with: {}, please generate question and answer pairs based on the input. Generate as many question and answer pairs as possible. The answers should be as concise as possible. Please provide result in JSON format like the following:
@@ -60,64 +89,39 @@ async fn handler(
         }}",
         user_input
     );
-    if let Ok(Some(qa_pairs)) = gen_pair(user_input, &mut messages).await {
-        let mut wtr = WriterBuilder::new()
-            .delimiter(b',')
-            .quote_style(QuoteStyle::Always)
-            .from_writer(vec![]);
 
-        wtr.write_record(&["Question", "Answer"])
-            .expect("Failed to header row record");
-
-        for (question, answer) in qa_pairs {
-            wtr.write_record(&[question, answer])
-                .expect("Failed to write record");
-        }
-
-        let formatted_answer =
-            String::from_utf8(wtr.into_inner().expect("Failed to finalize CSV writing"))
-                .expect("Failed to convert to String");
-        send_response(
-            200,
-            vec![(
-                String::from("content-type"),
-                String::from("text/plain; charset=UTF-8"),
-            )],
-            formatted_answer.as_bytes().to_vec(),
-        );
-    }
-}
-
-pub async fn gen_pair(
-    user_input: String,
-    messages: &mut Vec<ChatCompletionRequestMessage>,
-) -> Result<Option<Vec<(String, String)>>, Box<dyn std::error::Error>> {
-    #[derive(serde::Deserialize)]
-    struct QaPair {
-        question: String,
-        answer: String,
-    }
+    let messages = vec![
+        ChatCompletionRequestSystemMessageArgs::default()
+            .content(&bot_prompt)
+            .build()
+            .expect("Failed to build system message")
+            .into(),
+        ChatCompletionRequestUserMessageArgs::default()
+            .content(user_input)
+            .build()?
+            .into(),
+    ];
 
     let client = Client::new();
-    let user_msg_obj = ChatCompletionRequestUserMessageArgs::default()
-        .content(user_input)
-        .build()?
-        .into();
-
-    messages.push(user_msg_obj);
 
     let response_format = ChatCompletionResponseFormat {
         r#type: ChatCompletionResponseFormatType::JsonObject,
     };
 
     let request = CreateChatCompletionRequestArgs::default()
-        .max_tokens(2000u16)
+        // .max_tokens(4096u16)
         .model("gpt-3.5-turbo-1106")
-        .messages(messages.clone())
+        .messages(messages)
         .response_format(response_format)
         .build()?;
 
     let chat = client.chat().create(request).await?;
+
+    #[derive(serde::Deserialize)]
+    struct QaPair {
+        question: String,
+        answer: String,
+    }
 
     let mut qa_pairs_vec = Vec::new();
     if let Some(qa_pairs_json) = &chat.choices[0].message.content {
@@ -130,5 +134,26 @@ pub async fn gen_pair(
                 .collect();
         }
     }
+
     Ok(Some(qa_pairs_vec))
+}
+
+pub fn split_text_into_chunks(raw_text: &str, max_words_per_chunk: usize) -> Vec<String> {
+    let mut res = Vec::new();
+
+    let mut sentences = String::new();
+    let mut running_len = 0;
+    for sen in raw_text.split("\n") {
+        let len = sen.split_ascii_whitespace().count();
+        running_len += len;
+        if running_len > max_words_per_chunk {
+            res.push(sentences.clone());
+            sentences = sen.to_string();
+            running_len = len;
+        } else {
+            sentences.push_str(&sen);
+        }
+    }
+
+    res
 }
