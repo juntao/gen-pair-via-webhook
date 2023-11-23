@@ -24,7 +24,7 @@ pub async fn on_deploy() {
 
 pub async fn upload_airtable(question: &str, answer: &str) {
     let airtable_token_name = env::var("airtable_token_name").unwrap_or("github".to_string());
-    let airtable_base_id = env::var("airtable_base_id").unwrap_or("appNEswczILgUsxML".to_string());
+    let airtable_base_id = env::var("airtable_base_id").unwrap_or("appmhvMGsMRPmuUWJ".to_string());
     let airtable_table_name = env::var("airtable_table_name").unwrap_or("mention".to_string());
 
     let data = serde_json::json!({
