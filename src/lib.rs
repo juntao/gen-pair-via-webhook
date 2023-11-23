@@ -48,7 +48,7 @@ async fn handler(
     wtr.write_record(&["Question", "Answer"])
         .expect("Failed to header row record");
 
-    let chunks = split_text_into_chunks(&user_input, 3000);
+    let chunks = split_text_into_chunks(&user_input, 2000);
 
     for user_input in chunks {
         if let Ok(Some(qa_pairs)) = gen_pair(user_input).await {
