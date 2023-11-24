@@ -10,11 +10,11 @@ use async_openai::{
 use csv::{QuoteStyle, WriterBuilder};
 use dotenv::dotenv;
 use flowsnet_platform_sdk::logger;
-use log;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
 use webhook_flows::{create_endpoint, request_handler, send_response};
+use slack_flows::send_message_to_channel;
 
 #[no_mangle]
 #[tokio::main(flavor = "current_thread")]
@@ -51,10 +51,7 @@ async fn handler(
     _body: Vec<u8>,
 ) {
     let user_input = match String::from_utf8(_body) {
-        Ok(body) => {
-            log::info!("parsed body from request: {}", body.clone());
-            body
-        }
+        Ok(body) => body,
         Err(e) => {
             log::error!("Failed to parse request body as UTF-8 string: {}", e);
             return;
@@ -72,17 +69,36 @@ async fn handler(
     let chunks = split_text_into_chunks(&user_input, 2000);
     let mut count = 0;
 
+    let mut last_qa = String::new();
+    let mut last_chunk = String::new();
     for user_input in chunks {
-        if let Ok(Some(qa_pairs)) = gen_pair(user_input).await {
-            for (question, answer) in qa_pairs {
-                count += 1;
+        match gen_pair(&user_input).await {
+            Ok(Some(qa_pairs)) => {
+                for (question, answer) in qa_pairs {
+                    count += 1;
+                    last_qa = format!("Q: {}A: {}\n", question, answer);
 
-                wtr.write_record(&[question, answer])
-                    .expect("Failed to write record");
+                    wtr.write_record(&[question, answer])
+                        .expect("Failed to write record");
+                }
+            }
+            Ok(None) => {
+                log::warn!("No Q&A pairs generated for the current chunk.");
+            }
+            Err(e) => {
+                log::error!("Failed to generate Q&A pairs: {:?}", e);
             }
         }
-        log::error!("produced {} QAs", count);
+        log::info!("Processed {} Q&A pairs so far.", count);
+        last_chunk = user_input.clone();
     }
+
+    log::warn!("Last generated Q&A pair: {}", last_qa);
+    send_message_to_channel("ik8", "ch_err", last_qa).await;
+
+    let head = last_chunk.chars().take(100).collect::<String>();
+    send_message_to_channel("ik8", "general", head).await;
+
 
     let data = wtr.into_inner().expect("Failed to finalize CSV writing");
     let formatted_answer = String::from_utf8(data).expect("Failed to convert to String");
@@ -98,7 +114,7 @@ async fn handler(
 }
 
 pub async fn gen_pair(
-    user_input: String,
+    user_input: &str,
 ) -> Result<Option<Vec<(String, String)>>, Box<dyn std::error::Error>> {
     let bot_prompt = env::var("BOT_PROMPT").unwrap_or(
     "As a highly skilled language assistant, you are tasked with generating a scalable number of informative question and answer pairs from the provided text. The number of pairs generated should correspond to the length of the text: more pairs for longer texts, fewer pairs for shorter texts. Analyze the text at both the micro level—detailing specific segments—and the macro level—capturing overarching themes. Craft Q&A pairs that are relevant, accurate, and varied in type (factual, inferential, thematic). Your questions should be engaging, and answers should be concise, both reflecting the text's intent. Aim for a comprehensive dataset that is rich in content and suitable for training language models, balancing the depth and breadth of information without redundancy."
@@ -137,7 +153,7 @@ pub async fn gen_pair(
     };
 
     let request = CreateChatCompletionRequestArgs::default()
-        // .max_tokens(4096u16)
+        .max_tokens(3500u16)
         .model("gpt-3.5-turbo-1106")
         .messages(messages)
         .response_format(response_format)
@@ -199,6 +215,8 @@ pub fn split_text_into_chunks(raw_text: &str, max_words_per_chunk: usize) -> Vec
             sentences.push_str(&sen);
         }
     }
-
+    if !sentences.is_empty() {
+        res.push(sentences.clone());
+    }
     res
 }
