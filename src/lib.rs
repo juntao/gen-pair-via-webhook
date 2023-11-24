@@ -10,10 +10,12 @@ use async_openai::{
 use csv::{QuoteStyle, WriterBuilder};
 use dotenv::dotenv;
 use flowsnet_platform_sdk::logger;
+use log;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
 use webhook_flows::{create_endpoint, request_handler, send_response};
+
 #[no_mangle]
 #[tokio::main(flavor = "current_thread")]
 pub async fn on_deploy() {
@@ -141,7 +143,14 @@ pub async fn gen_pair(
         .response_format(response_format)
         .build()?;
 
-    let chat = client.chat().create(request).await?;
+    let chat = match client.chat().create(request).await {
+        Ok(chat) => chat,
+
+        Err(e) => {
+            log::error!("Failed to create chat: {:?}", e);
+            return Ok(None);
+        }
+    };
 
     #[derive(serde::Deserialize)]
     struct QaPair {
@@ -151,7 +160,14 @@ pub async fn gen_pair(
 
     let mut qa_pairs_vec = Vec::new();
     if let Some(qa_pairs_json) = &chat.choices[0].message.content {
-        let deserialized: HashMap<String, Vec<QaPair>> = serde_json::from_str(&qa_pairs_json)?;
+        let deserialized: HashMap<String, Vec<QaPair>> = match serde_json::from_str(&qa_pairs_json)
+        {
+            Ok(deserialized) => deserialized,
+            Err(e) => {
+                log::error!("Failed to deserialize qa_pairs_json: {:?}", e);
+                return Ok(None);
+            }
+        };
 
         if let Some(qa_pairs) = deserialized.get("qa_pairs") {
             qa_pairs_vec = qa_pairs
