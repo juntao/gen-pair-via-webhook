@@ -127,7 +127,7 @@ Your task is to dissect this text for both granular details and broader themes, 
     };
 
     let request = CreateChatCompletionRequestArgs::default()
-        .max_tokens(7200u16)
+        .max_tokens(4000u16)
         .model("gpt-4-1106-preview")
         .messages(messages)
         .response_format(response_format)
