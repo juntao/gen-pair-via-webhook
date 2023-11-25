@@ -1,4 +1,3 @@
-use airtable_flows::create_record;
 use async_openai::{
     types::{
         ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestUserMessageArgs,
@@ -14,7 +13,6 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
 use webhook_flows::{create_endpoint, request_handler, send_response};
-use slack_flows::send_message_to_channel;
 
 #[no_mangle]
 #[tokio::main(flavor = "current_thread")]
@@ -24,34 +22,16 @@ pub async fn on_deploy() {
     create_endpoint().await;
 }
 
-pub async fn upload_airtable(question: &str, answer: &str) {
-    let airtable_token_name = env::var("airtable_token_name").unwrap_or("github".to_string());
-    let airtable_base_id = env::var("airtable_base_id").unwrap_or("appmhvMGsMRPmuUWJ".to_string());
-    let airtable_table_name = env::var("airtable_table_name").unwrap_or("mention".to_string());
-
-    let data = serde_json::json!({
-        "Question": question,
-        "Answer": answer,
-    });
-    match create_record(
-        &airtable_token_name,
-        &airtable_base_id,
-        &airtable_table_name,
-        data.clone(),
-    ) {
-        () => log::info!("Uploaded to airtable: {}", answer.to_string()),
-    }
-}
-
 #[request_handler(GET, POST)]
 async fn handler(
     _headers: Vec<(String, String)>,
     _subpath: String,
     _qry: HashMap<String, Value>,
-    _body: Vec<u8>,
+    body: Vec<u8>,
 ) {
-    let user_input = match String::from_utf8(_body) {
-        Ok(body) => body,
+    logger::init();
+    let user_input = match String::from_utf8(body) {
+        Ok(txt) => txt,
         Err(e) => {
             log::error!("Failed to parse request body as UTF-8 string: {}", e);
             return;
@@ -66,18 +46,13 @@ async fn handler(
     wtr.write_record(&["Question", "Answer"])
         .expect("Failed to header row record");
 
-    let chunks = split_text_into_chunks(&user_input, 2000);
+    let chunks = split_text_into_chunks(&user_input);
     let mut count = 0;
-
-    let mut last_qa = String::new();
-    let mut last_chunk = String::new();
     for user_input in chunks {
         match gen_pair(&user_input).await {
             Ok(Some(qa_pairs)) => {
                 for (question, answer) in qa_pairs {
                     count += 1;
-                    last_qa = format!("Q: {}A: {}\n", question, answer);
-
                     wtr.write_record(&[question, answer])
                         .expect("Failed to write record");
                 }
@@ -90,15 +65,7 @@ async fn handler(
             }
         }
         log::info!("Processed {} Q&A pairs so far.", count);
-        last_chunk = user_input.clone();
     }
-
-    log::warn!("Last generated Q&A pair: {}", last_qa);
-    send_message_to_channel("ik8", "ch_err", last_qa).await;
-
-    let head = last_chunk.chars().take(100).collect::<String>();
-    send_message_to_channel("ik8", "general", head).await;
-
 
     let data = wtr.into_inner().expect("Failed to finalize CSV writing");
     let formatted_answer = String::from_utf8(data).expect("Failed to convert to String");
@@ -116,27 +83,33 @@ async fn handler(
 pub async fn gen_pair(
     user_input: &str,
 ) -> Result<Option<Vec<(String, String)>>, Box<dyn std::error::Error>> {
-    let bot_prompt = env::var("BOT_PROMPT").unwrap_or(
-    "As a highly skilled language assistant, you are tasked with generating a scalable number of informative question and answer pairs from the provided text. The number of pairs generated should correspond to the length of the text: more pairs for longer texts, fewer pairs for shorter texts. Analyze the text at both the micro level—detailing specific segments—and the macro level—capturing overarching themes. Craft Q&A pairs that are relevant, accurate, and varied in type (factual, inferential, thematic). Your questions should be engaging, and answers should be concise, both reflecting the text's intent. Aim for a comprehensive dataset that is rich in content and suitable for training language models, balancing the depth and breadth of information without redundancy."
+    let sys_prompt = env::var("SYS_PROMPT").unwrap_or(
+    "As a highly skilled assistant, you are tasked with generating as many as possible informative question and answer pairs from the provided text. Craft Q&A pairs that are relevant, accurate, and varied in type (factual, inferential, thematic). Your questions should be engaging, and answers should be concise, both reflecting the text's intent. Aim for a comprehensive dataset that is rich in content and suitable for training language models, balancing the depth and breadth of information without redundancy."
 .into());
 
-    let user_input = format!(
-        "Here is the user input to work with: {}. Your task is to dissect this text for both granular details and broader themes, crafting multiple Q&A pairs for each part. The questions should cover different types: factual, inferential, thematic, etc. Answers must be concise and reflective of the text's intent. Please generate as many question and answers as possible. Provide the results in the following JSON format:
+    let user_input = format!("
+Here is the user input to work with:
+
+---
+{}
+---
+
+Your task is to dissect this text for both granular details and broader themes, crafting as many Q&A pairs as possible. The questions should cover different types: factual, inferential, thematic, etc. Answers must be concise and reflective of the text's intent. Please generate as many question and answers as possible. Provide the results in the following JSON format:
+{{
+    \"qa_pairs\": [
         {{
-            \"qa_pairs\": [
-                {{
-                    \"question\": \"<Your question>\",
-                    \"answer\": \"<Your answer>\"
-                }},
-                // ... additional Q&A pairs based on text length
-            ]
-        }}",
+            \"question\": \"<Your question>\",
+            \"answer\": \"<Your answer>\"
+        }},
+        // ... additional Q&A pairs based on text length
+    ]
+}}",
         user_input
     );
 
     let messages = vec![
         ChatCompletionRequestSystemMessageArgs::default()
-            .content(&bot_prompt)
+            .content(&sys_prompt)
             .build()
             .expect("Failed to build system message")
             .into(),
@@ -153,8 +126,8 @@ pub async fn gen_pair(
     };
 
     let request = CreateChatCompletionRequestArgs::default()
-        .max_tokens(3500u16)
-        .model("gpt-3.5-turbo-1106")
+        .max_tokens(7200u16)
+        .model("gpt-4-1106-preview")
         .messages(messages)
         .response_format(response_format)
         .build()?;
@@ -192,31 +165,21 @@ pub async fn gen_pair(
                 .collect();
         }
     }
-    for (question, answer) in &qa_pairs_vec {
-        upload_airtable(question, answer).await;
-    }
-
     Ok(Some(qa_pairs_vec))
 }
 
-pub fn split_text_into_chunks(raw_text: &str, max_words_per_chunk: usize) -> Vec<String> {
+pub fn split_text_into_chunks(raw_text: &str) -> Vec<String> {
     let mut res = Vec::new();
+    let mut current_section = String::new();
 
-    let mut sentences = String::new();
-    let mut running_len = 0;
-    for sen in raw_text.split("\n") {
-        let len = sen.split_ascii_whitespace().count();
-        running_len += len;
-        if running_len > max_words_per_chunk {
-            res.push(sentences.clone());
-            sentences = sen.to_string();
-            running_len = len;
-        } else {
-            sentences.push_str(&sen);
+    for line in raw_text.lines() {
+        current_section.push_str(line);
+        current_section.push('\n');
+
+        if line.trim().is_empty() {
+            res.push(current_section.clone());
+            current_section.clear();
         }
-    }
-    if !sentences.is_empty() {
-        res.push(sentences.clone());
     }
     res
 }
