@@ -48,8 +48,10 @@ async fn handler(
 
     let chunks = split_text_into_chunks(&user_input);
     let chunks_len = chunks.len();
+    let mut chunk_count = 0;
     let mut count = 0;
     for user_input in chunks {
+        chunk_count += 1;
         match gen_pair(&user_input).await {
             Ok(Some(qa_pairs)) => {
                 for (question, answer) in qa_pairs {
@@ -65,7 +67,7 @@ async fn handler(
                 log::error!("Failed to generate Q&A pairs: {:?}", e);
             }
         }
-        log::info!("Processed {} of {} Q&A pairs so far.", count, chunks_len);
+        log::info!("Processed {} Q&A pairs in {} of {} sections.", count, chunk_count, chunks_len);
     }
 
     let data = wtr.into_inner().expect("Failed to finalize CSV writing");
