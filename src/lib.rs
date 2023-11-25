@@ -47,6 +47,7 @@ async fn handler(
         .expect("Failed to header row record");
 
     let chunks = split_text_into_chunks(&user_input);
+    let chunks_len = chunks.len();
     let mut count = 0;
     for user_input in chunks {
         match gen_pair(&user_input).await {
@@ -64,7 +65,7 @@ async fn handler(
                 log::error!("Failed to generate Q&A pairs: {:?}", e);
             }
         }
-        log::info!("Processed {} Q&A pairs so far.", count);
+        log::info!("Processed {} of {} Q&A pairs so far.", count, chunks_len);
     }
 
     let data = wtr.into_inner().expect("Failed to finalize CSV writing");
@@ -173,10 +174,12 @@ pub fn split_text_into_chunks(raw_text: &str) -> Vec<String> {
     let mut current_section = String::new();
 
     for line in raw_text.lines() {
-        current_section.push_str(line);
-        current_section.push('\n');
+        if !line.trim().is_empty() {
+            current_section.push_str(line);
+            current_section.push('\n');
+        }
 
-        if line.trim().is_empty() {
+        if line.trim().is_empty() && !current_section.trim().is_empty() {
             res.push(current_section.clone());
             current_section.clear();
         }
