@@ -43,9 +43,6 @@ async fn handler(
         .quote_style(QuoteStyle::Always)
         .from_writer(vec![]);
 
-    wtr.write_record(&["Question", "Answer"])
-        .expect("Failed to header row record");
-
     let chunks = split_text_into_chunks(&user_input);
     let chunks_len = chunks.len();
     let mut chunk_count = 0;
